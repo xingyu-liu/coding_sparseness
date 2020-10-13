@@ -1,9 +1,24 @@
 # coding_sparseness
 Scripts here are related to Liu et al., 2020, Hierarchical sparse coding of objects in deep convolutional neural networks (in review).
 
-# DCNN activation extraction
-Discription: The DNNBrain toolbox was used to extract the DCNN activation. Check out [here](https://github.com/BNUCNL/dnnbrain/). <br>
-Code: /activation_extraction.py
+## setup framework
 
-# Analyses for population sparseness
+```
+mkdir -p models
+cd models
+wget https://download.pytorch.org/models/vgg11-bbd30ac9.pth
+mv vgg11-bbd30ac9.pth vgg11.pth
+wget https://download.pytorch.org/models/alexnet-owt-4df8aa71.pth
+mv alexnet-owt-4df8aa71.pth alexnet.pth
+```
+
+
+## DCNN activation extraction
+Description: The DNNBrain toolbox was used to extract the DCNN activation. Check out [here](https://github.com/BNUCNL/dnnbrain/). 
+
+```
+DNNBRAIN_DATA=models  ipython activation_extraction.py
+```
+
+## Analyses for population sparseness
 Code: /coding_sparseness.py
