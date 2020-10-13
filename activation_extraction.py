@@ -13,18 +13,24 @@ from dnnbrain.utils.util import gen_dmask
 import torch.nn as nn
 import torch
 
-root = '/nfs/a1/userhome/liuxingyu/workingdir/coding_sparseness'
+#%% specify custom paremeters
 net = 'AlexNet' # 'AlexNet', 'Vgg11'
-null_method = 'permut_weight_kernel'  # 'permut_weight', 'permut_weight_chn', 'permut_weight_kernel', 'permut_bias', 'norelu', 'None'
-relu = True
-dataset = 'imagenet'
-n = 10
+null_method = 'None'  # 'permut_weight', 'permut_weight_chn', 'permut_weight_kernel', 'permut_bias', 'norelu', 'None'
+relu = True # the sublayer to get activation from. True -> post-Relu; False -> pre-Relu 
+dataset = 'imagenet' # 'imagenet', 'caltech256', 'caltech143'
+n = 10 # number of permuted models
+root = os.getcwd() # path to save extracted activation
+stim_path = os.path.join('{0}.stim.csv'.format(dataset)) # change the path in [dataset].stim.csv to the local directory of the dataset 
+
+#%% prepare other paremeters
+net_dir = os.path.join(root, net.lower())
+if os.path.exists(net_dir) is False:
+    os.mkdir(net_dir)
 
 if dataset == 'imagenet':
     stim_per_cat = 50
-elif dataset == 'caltech256' or dataset == 'caltech143':
+elif dataset in ['caltech256', 'caltech143']:
     stim_per_cat = 80
-
 
 if relu is True:
     pf = '_relu'
@@ -41,11 +47,7 @@ elif net == 'Vgg11':
                   'conv5' + pf, 'conv6' + pf, 'conv7' + pf, 'conv8' + pf,
                   'fc1' + pf, 'fc2' + pf]
 
-parent_dir = os.path.join(root, net.lower())
-stim_path = os.path.join(root, '{0}.stim.csv'.format(dataset))
-
-from dnnbrain.dnn import models as db_models  # used by eval
-
+#%% Load DNN, stimuli and define ablated models
 dnn = eval('db_models.{}()'.format(net))  # load DNN
 stimuli = Stimulus()
 stimuli.load(stim_path) # load stimuli
@@ -124,8 +126,7 @@ def norelu_model(dnn):
     replace_relu_to_none(dnn.model)
 
 
-#%%
-# extract activation from normal and norelu model
+#%% extract activation from normal and norelu model
 if null_method is None or null_method == 'norelu':
 
     if null_method == 'norelu':
@@ -153,9 +154,7 @@ if null_method is None or null_method == 'norelu':
     # save act
     activation.save(out_path)
 
-
-#%%
-# extract activation from weight permuted model
+#%% extract activation from weight permuted model
 if null_method in ['permut_weight', 'permut_weight_chn', 'permut_weight_kernel', 'permut_bias']:
     for i in range(n):
 
@@ -189,3 +188,4 @@ if null_method in ['permut_weight', 'permut_weight_chn', 'permut_weight_kernel',
         out_path = os.path.join(out_dir, '{0}_{1}_{2}_mean_{3}_{4}.act.h5'.format(
                 net.lower(), null_method, sublayer, dataset, i))
         activation.save(out_path)
+
