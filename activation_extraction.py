@@ -16,11 +16,11 @@ import torch
 #%% specify custom paremeters
 net = 'AlexNet' # 'AlexNet', 'Vgg11'
 null_method = 'None'  # 'permut_weight', 'permut_weight_chn', 'permut_weight_kernel', 'permut_bias', 'norelu', 'None'
-relu = True # the sublayer to get activation from. True -> post-Relu; False -> pre-Relu 
+relu = True # the sublayer to get activation from. True -> post-Relu; False -> pre-Relu
 dataset = 'imagenet' # 'imagenet', 'caltech256', 'caltech143'
 n = 10 # number of permuted models
 root = os.getcwd() # path to save extracted activation
-stim_path = os.path.join('{0}.stim.csv'.format(dataset)) # change the path in [dataset].stim.csv to the local directory of the dataset 
+stim_path = os.path.join('{0}.stim.csv'.format(dataset)) # change the path in [dataset].stim.csv to the local directory of the dataset
 
 #%% prepare other paremeters
 net_dir = os.path.join(root, net.lower())
@@ -48,6 +48,7 @@ elif net == 'Vgg11':
                   'fc1' + pf, 'fc2' + pf]
 
 #%% Load DNN, stimuli and define ablated models
+from dnnbrain.dnn import models as db_models  # used by eval
 dnn = eval('db_models.{}()'.format(net))  # load DNN
 stimuli = Stimulus()
 stimuli.load(stim_path) # load stimuli
@@ -188,4 +189,3 @@ if null_method in ['permut_weight', 'permut_weight_chn', 'permut_weight_kernel',
         out_path = os.path.join(out_dir, '{0}_{1}_{2}_mean_{3}_{4}.act.h5'.format(
                 net.lower(), null_method, sublayer, dataset, i))
         activation.save(out_path)
-
