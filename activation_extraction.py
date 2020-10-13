@@ -20,7 +20,7 @@ relu = True # the sublayer to get activation from. True -> post-Relu; False -> p
 dataset = 'imagenet' # 'imagenet', 'caltech256', 'caltech143'
 n = 10 # number of permuted models
 root = os.getcwd() # path to save extracted activation
-stim_path = os.path.join('{0}.stim.csv'.format(dataset)) # change the path in [dataset].stim.csv to the directory of 
+stim_path = os.path.join('{0}.stim.csv'.format(dataset)) # change the path in [dataset].stim.csv to the local directory of the dataset 
 
 #%% prepare other paremeters
 net_dir = os.path.join(root, net.lower())
