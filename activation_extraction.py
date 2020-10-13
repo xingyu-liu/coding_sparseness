@@ -44,6 +44,8 @@ elif net == 'Vgg11':
 parent_dir = os.path.join(root, net.lower())
 stim_path = os.path.join(root, '{0}.stim.csv'.format(dataset))
 
+from dnnbrain.dnn import models as db_models  # used by eval
+
 dnn = eval('db_models.{}()'.format(net))  # load DNN
 stimuli = Stimulus()
 stimuli.load(stim_path) # load stimuli
