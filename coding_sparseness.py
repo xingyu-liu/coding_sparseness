@@ -11,7 +11,6 @@ import numpy as np
 from scipy import stats
 import matplotlib.pyplot as plt
 import matplotlib.gridspec as gridspec
-import mytool
 from sklearn.preprocessing import MinMaxScaler
 import seaborn as sns
 import pandas as pd
@@ -21,28 +20,22 @@ from dnnbrain.io.fileio import ActivationFile
 import statsmodels.formula.api as smf
 import time
 
+#%% specify custom paremeters
+root = os.getcwd() # path to save extracted activation
+net = 'alexnet' + '' # DNN model + ablation: ['alexnet', 'vgg11'] + ['', _permut_weight', '_permut_bias', '_norelu]
 
-root = '/nfs/a1/userhome/liuxingyu/workingdir/coding_sparseness'
-net = 'alexnet'  
-if net in ['alexnet', 'alexnet_permut', 'alexnet_permut_weight', 'alexnet_permut_weight_chn', 
-           'alexnet_permut_bias', 'alexnet_norelu']:
+# prepare parameters
+if net in ['alexnet','alexnet_permut_weight', 'alexnet_permut_bias', 'alexnet_norelu']:
     layer_name = ['conv1', 'conv2', 'conv3', 'conv4', 'conv5',
                'fc1', 'fc2']
-    layer_chn_num = np.array([64, 192, 384, 256, 256, 4096, 4096])
-elif net in ['vgg11', 'vgg11_permut', 'vgg11_norelu']:
+elif net in ['vgg11', 'vgg11_permut_weight', 'vgg11_permut_bias', 'vgg11_norelu']:
     layer_name = ['conv1', 'conv2', 'conv3', 'conv4', 'conv5',
                   'conv6', 'conv7', 'conv8', 'fc1', 'fc2']
-    layer_chn_num = np.array([64, 128, 256, 256, 512, 512, 512, 512,
-                              4096, 4096])   
 
-parent_dir = os.path.join(root, net)
-caltech256_label_path = os.path.join(root, 'caltech256_label')
-caltech256_label = mytool.utils.readtxt(caltech256_label_path, delimiter='\t',
-                                        exclude_first_n_line=1)
-caltech256_label = np.asarray(caltech256_label)
+net_dir = os.path.join(root, net)
+caltech256_label = pd.read_csv(os.path.join(root, 'caltech256_label'), sep='\t')
 
 #%%
-
 class Dnn_act:
     """ dnn activation
 
@@ -121,10 +114,11 @@ def sparseness(x, type='s', norm=False):
 # PSI(sp) for normal and ablated models
 # =======================
     
-dataset = 'imagenet'  # 'imagenet', 'caltech143', 'caltech256'
-act_method = 'relu_mean'  # 'relu_mean', 'relu_max' 'conv_mean', 'conv_max'
-bins = 20
+dataset = 'caltech256'  # 'imagenet', 'caltech143', 'caltech256'
+act_method = 'relu'  # the sublayer to get activation from: ['relu', 'conv']
+bins = 20 # bins for activation histogram
 
+# read dnn actiation
 if dataset == 'imagenet':
     stim_per_cat = 50
 elif dataset == 'caltech256' or dataset == 'caltech143':
@@ -134,16 +128,17 @@ elif dataset == 'indoor':
 
 if dataset == 'caltech143':
     dnnact_path = os.path.join(
-            parent_dir, 'dnn_activation', '{0}_{1}_{2}.act.h5'.format(
+            net_dir, 'dnn_activation', '{0}_{1}_mean_{2}.act.h5'.format(
                     net, act_method, 'caltech256'))
 else:
     dnnact_path = os.path.join(
-            parent_dir, 'dnn_activation', '{0}_{1}_{2}.act.h5'.format(
+            net_dir, 'dnn_activation', '{0}_{1}_mean_{2}.act.h5'.format(
                     net, act_method, dataset))
 dnnact_alllayer = ActivationFile(dnnact_path).read()
 
+# compute PSI
 sp = []
-sparse_p_bincount = []
+sp_bincount = []
 pdf_bin = []
 for layer in list(dnnact_alllayer.keys()):
 
@@ -151,7 +146,7 @@ for layer in list(dnnact_alllayer.keys()):
     dnnact_catmean = dnnact.cat_mean_act()[0][:, :, 0]
     
     if dataset == 'caltech143':
-        dnnact_catmean = dnnact_catmean[caltech256_label[:,-1] == '0', :]
+        dnnact_catmean = dnnact_catmean[caltech256_label['imagenet1000'] == '0', :]
     
     if net.split('_')[-1] == 'norelu':
         dnnact_catmean = np.abs(stats.zscore(dnnact_catmean, 0))
@@ -160,7 +155,7 @@ for layer in list(dnnact_alllayer.keys()):
 
     # population sparseness
     sparse_p = sparseness(dnnact_catmean_z.T, type='s', norm=True)
-    sparse_p_bincount.append(
+    sp_bincount.append(
             pd.cut(sparse_p, np.linspace(0, 1, bins+1)).value_counts().values
             /dnnact_catmean.shape[0] * 100)
 
@@ -168,18 +163,15 @@ for layer in list(dnnact_alllayer.keys()):
     print('{0} done'.format(layer))
     
     # fit pdf
-    dnnact_catmean_z_norm = mytool.core.normalize(dnnact_catmean_z.T)
+    min_max_scaler = MinMaxScaler(feature_range=(0, 1))
+    dnnact_catmean_z_norm = min_max_scaler.fit_transform(dnnact_catmean_z.T)
+    
     dist_bin = [np.histogram(dnnact_catmean_z_norm[:,i], bins=np.arange(0,1,0.01),density=True)[0] for i in range(dnnact_catmean_z_norm.shape[-1])]
     pdf_bin.append(np.asarray(dist_bin).mean(0))
 
-
-sparse_p_bincount = np.asarray(sparse_p_bincount).T
+sp_bincount = np.asarray(sp_bincount).T
 pdf_bin = np.asarray(pdf_bin).T
-sp_median = mytool.core.list_stats(sp, method='nanmedian')
-sp_std = mytool.core.list_stats(sp, method='nanstd')
-sp_interquartile = [np.percentile(sp[i], 75, interpolation='midpoint') -
-                    np.percentile(sp[i], 25, interpolation='midpoint') for i
-                    in range(len(sp))]
+sp_median = np.array([np.nanmedian(sp[i]) for i in range(len(sp))])
 sp_range = [sp[i].max()-sp[i].min() for i in range(len(sp))]
 
 # stats trend test
@@ -187,25 +179,26 @@ sp_alllayer = np.asarray(sp).reshape(-1)
 h_index = np.repeat(np.arange(len(sp))+1 , sp[0].shape)
 tau = stats.kendalltau(h_index, sp_alllayer)
 
-    
 # %% ===== 2 =====
 # multi-channel category classification analysis
 # ==========
 
 dataset = 'caltech256'  
-act_method = 'relu_mean'  # 'relu_mean', 'relu_max'
+act_method = 'relu'  # the sublayer to get activation from: ['relu', 'conv']
+
+# prepare parameters
 stim_per_cat = 80
 n_cat = 256
-
 model_method = 'lr' 
 cvfold = 2
 max_iter = 10000
-top_n = 10
 
 dnnact_path = os.path.join(
-        parent_dir, 'dnn_activation', '{0}_{1}_{2}.act.h5'.format(
+        net_dir, 'dnn_activation', '{0}_{1}_mean_{2}.act.h5'.format(
                 net, act_method, dataset))
-pred_dir = os.path.join(parent_dir, 'dnn_prediction')
+pred_dir = os.path.join(net_dir, 'dnn_prediction')
+if os.path.exists(pred_dir) is False:
+    os.makedirs(pred_dir)
 
 # estimating classification performance
 dnnact_alllayer = ActivationFile(dnnact_path).read()
@@ -214,7 +207,7 @@ for layer in list(dnnact_alllayer.keys()):
     
     dnnact = np.squeeze(dnnact_alllayer[layer])
     model_path = os.path.join(
-            pred_dir, '{0}_{1}_{2}_{3}_multipred_{4}_model.pkl'.format(
+            pred_dir, '{0}_{1}_mean_{2}_{3}_multipred_{4}_model.pkl'.format(
                     net, act_method, layer.split('_')[0], dataset, model_method))
     
     # full model accuracy
@@ -250,14 +243,13 @@ for layer in list(dnnact_alllayer.keys()):
 acc = []
 for layer in list(dnnact_alllayer.keys()):
     confus_path = os.path.join(
-            pred_dir, '{0}_{1}_{2}_{3}_multipred_{4}_confus.npy'.format(
+            pred_dir, '{0}_{1}_mean_{2}_{3}_multipred_{4}_confus.npy'.format(
                     net, act_method, layer.split('_')[0], dataset, model_method))
     confus = np.load(confus_path).mean(0)
     acc.append(confus.diagonal()/(confus[0, :].sum()))
-
 acc = np.asarray(acc)
 
-# layer sp 2 final out ut acc
+# layerwise correlation between sp and performance of FC2
 acc_sp_corr = [stats.pearsonr(sp[i][~np.isnan(sp[i])], 
                  acc[-1,~np.isnan(sp[i])]) for i 
                in range(len(sp))]
@@ -373,16 +365,16 @@ for i in range(len(sp)):
 # =======================
 
 dataset = 'imagenet'  # 'imagenet', 'caltech143', 'caltech256'
-act_method = 'relu_mean'  # 'relu_mean', 'relu_max' 'conv_mean', 'conv_max'
-bins = 20
-n = 10
+act_method = 'relu'  # the sublayer to get activation from: ['relu', 'conv']
+bins = 20 # bins for activation histogram
+n = 10 # number of permuted models
 
+#
 stim_per_cat = 1
-
 sp_median = []
 for i in range(n):
     dnnact_path = os.path.join(
-                parent_dir, 'dnn_activation', '{0}_{1}_{2}_{3}.act.h5'.format(
+                net_dir, 'dnn_activation', '{0}_{1}_mean_{2}_{3}.act.h5'.format(
                         net, act_method, dataset, i))
     dnnact_alllayer = ActivationFile(dnnact_path).read()
     
@@ -400,7 +392,7 @@ for i in range(n):
         sp.append(np.squeeze(sparse_p))    
         print('{0} done'.format(layer))
 
-    sp_median.append(mytool.core.list_stats(sp, method='nanmedian'))
+    sp_median.append(np.array([np.nanmedian(sp[i]) for i in range(len(sp))]))
 
 sp_median = np.asarray(sp_median).T
 sp_median_plot = sp_median.reshape(-1)
