@@ -10,12 +10,13 @@ import os
 import numpy as np
 from dnnbrain.dnn.core import Stimulus
 from dnnbrain.utils.util import gen_dmask
+from dnnbrain.dnn import models as db_models
 import torch.nn as nn
 import torch
 
 #%% specify custom paremeters
-net = 'AlexNet' # 'AlexNet', 'Vgg11'
-null_method = 'None'  # 'permut_weight', 'permut_weight_chn', 'permut_weight_kernel', 'permut_bias', 'norelu', 'None'
+net = 'Googlenet' # 'AlexNet', 'Vgg11', 'Googlenet', 'Resnet152'
+null_method = None  # None, 'permut_weight', 'permut_weight_chn', 'permut_weight_kernel', 'permut_bias', 'norelu'
 relu = True # the sublayer to get activation from. True -> post-Relu; False -> pre-Relu 
 dataset = 'imagenet' # 'imagenet', 'caltech256', 'caltech143'
 n = 10 # number of permuted models
@@ -39,6 +40,11 @@ elif relu is False:
     pf = ''
     sublayer = 'conv'
     
+#%% Load DNN, stimuli and define ablated models
+dnn = eval('db_models.{}()'.format(net))  # load DNN
+stimuli = Stimulus()
+stimuli.load(stim_path) # load stimuli
+
 if net == 'AlexNet':
     layer_name = ['conv1' + pf, 'conv2' + pf, 'conv3' + pf, 'conv4' + pf,
                   'conv5' + pf, 'fc1' + pf, 'fc2' + pf]
@@ -46,11 +52,11 @@ elif net == 'Vgg11':
     layer_name = ['conv1' + pf, 'conv2' + pf, 'conv3' + pf, 'conv4' + pf, 
                   'conv5' + pf, 'conv6' + pf, 'conv7' + pf, 'conv8' + pf,
                   'fc1' + pf, 'fc2' + pf]
-
-#%% Load DNN, stimuli and define ablated models
-dnn = eval('db_models.{}()'.format(net))  # load DNN
-stimuli = Stimulus()
-stimuli.load(stim_path) # load stimuli
+elif net == 'Resnet152':
+    layer_name = dnn.layers[4:-1]
+elif net == 'Googlenet':
+    layer_name = [dnn.layers[i] for i in range(len(dnn.layers)) if dnn.layers[i][:4] in ['conv','ince']]
+    
 dmask = gen_dmask(layer_name)  # generate DNN mask
 
 # permut weights pretrained network for each layer, finest granularity purmutation    

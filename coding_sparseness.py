@@ -19,19 +19,14 @@ from sklearn.metrics import confusion_matrix
 from dnnbrain.io.fileio import ActivationFile
 import statsmodels.formula.api as smf
 import time
+from PIL import Image
 
 #%% specify custom paremeters
-root = os.getcwd() # path to save extracted activation
-net = 'alexnet' + '' # DNN model + ablation: ['alexnet', 'vgg11'] + ['', _permut_weight', '_permut_bias', '_norelu]
+#root = os.getcwd() # path to save extracted activation
+root = '/nfs/a1/userhome/liuxingyu/workingdir/coding_sparseness' # path to save extracted activation
+net = 'vgg11' + '' # DNN model + ablation: ['alexnet', 'vgg11'] + ['', _permut_weight', '_permut_bias', '_norelu]
 
 # prepare parameters
-if net in ['alexnet','alexnet_permut_weight', 'alexnet_permut_bias', 'alexnet_norelu']:
-    layer_name = ['conv1', 'conv2', 'conv3', 'conv4', 'conv5',
-               'fc1', 'fc2']
-elif net in ['vgg11', 'vgg11_permut_weight', 'vgg11_permut_bias', 'vgg11_norelu']:
-    layer_name = ['conv1', 'conv2', 'conv3', 'conv4', 'conv5',
-                  'conv6', 'conv7', 'conv8', 'fc1', 'fc2']
-
 net_dir = os.path.join(root, net)
 caltech256_label = pd.read_csv(os.path.join(root, 'caltech256_label'), sep='\t')
 
@@ -123,8 +118,6 @@ if dataset == 'imagenet':
     stim_per_cat = 50
 elif dataset == 'caltech256' or dataset == 'caltech143':
     stim_per_cat = 80
-elif dataset == 'indoor':
-    stim_per_cat = 100
 
 if dataset == 'caltech143':
     dnnact_path = os.path.join(
@@ -136,20 +129,27 @@ else:
                     net, act_method, dataset))
 dnnact_alllayer = ActivationFile(dnnact_path).read()
 
+if net.split('_')[0] == 'resnet152':
+    layer_name = sorted(list(dnnact_alllayer.keys()), key=lambda info: (info[5], int(info[17:])))
+else:
+    layer_name = list(dnnact_alllayer.keys())
+    
 # compute PSI
 sp = []
+sp_img = []
 sp_bincount = []
 pdf_bin = []
-for layer in list(dnnact_alllayer.keys()):
+for layer in layer_name:
 
-    dnnact = Dnn_act(dnnact_alllayer[layer], stim_per_cat=stim_per_cat)       
+    dnnact = Dnn_act(dnnact_alllayer[layer], stim_per_cat=stim_per_cat)
+    sp_img.append(sparseness(dnnact.data[:,:,0].T, type='s', norm=True))
     dnnact_catmean = dnnact.cat_mean_act()[0][:, :, 0]
     
     if dataset == 'caltech143':
         dnnact_catmean = dnnact_catmean[caltech256_label['imagenet1000'] == '0', :]
     
-    if net.split('_')[-1] == 'norelu':
-        dnnact_catmean = np.abs(stats.zscore(dnnact_catmean, 0))
+#    if net.split('_')[-1] == 'norelu':
+#        dnnact_catmean = np.abs(stats.zscore(dnnact_catmean, 0))
 
     dnnact_catmean_z = np.nan_to_num(stats.zscore(dnnact_catmean, 0))
 
@@ -162,7 +162,7 @@ for layer in list(dnnact_alllayer.keys()):
     sp.append(np.squeeze(sparse_p))    
     print('{0} done'.format(layer))
     
-    # fit pdf
+    # pdf
     min_max_scaler = MinMaxScaler(feature_range=(0, 1))
     dnnact_catmean_z_norm = min_max_scaler.fit_transform(dnnact_catmean_z.T)
     
@@ -174,6 +174,24 @@ pdf_bin = np.asarray(pdf_bin).T
 sp_median = np.array([np.nanmedian(sp[i]) for i in range(len(sp))])
 sp_range = [sp[i].max()-sp[i].min() for i in range(len(sp))]
 
+# fit pdf
+dist_model = ['norm','weibull']
+log_lik = np.zeros((len(layer_name), len(dist_model)))
+weib_paras = []
+for i in range(len(layer_name)):
+    data = pdf_bin[:, i] 
+    row = 0
+    # norm
+    norm_para = stats.norm.fit(data)
+    log_lik[i, row] = np.sum(stats.norm.logpdf(data, *norm_para)) 
+    row += 1
+    # weibull
+    weib_para = stats.weibull_min.fit(data)
+    log_lik[i, row] = np.sum(stats.weibull_min.logpdf(data, *weib_para)) 
+    weib_paras.append(weib_para)
+    row += 1
+weib_k = np.asarray(weib_paras)[:,0]
+
 # stats trend test
 sp_alllayer = np.asarray(sp).reshape(-1)
 h_index = np.repeat(np.arange(len(sp))+1 , sp[0].shape)
@@ -183,6 +201,7 @@ tau = stats.kendalltau(h_index, sp_alllayer)
 # multi-channel category classification analysis
 # ==========
 
+net = 'vgg11'  # 'alexnet', 'vgg11'
 dataset = 'caltech256'  
 act_method = 'relu'  # the sublayer to get activation from: ['relu', 'conv']
 
@@ -200,126 +219,69 @@ pred_dir = os.path.join(net_dir, 'dnn_prediction')
 if os.path.exists(pred_dir) is False:
     os.makedirs(pred_dir)
 
-# estimating classification performance
+
+# ----- estimating classification performance -----
 dnnact_alllayer = ActivationFile(dnnact_path).read()
+dnnact = np.squeeze(dnnact_alllayer['fc2_relu'])
 
-for layer in list(dnnact_alllayer.keys()):
-    
-    dnnact = np.squeeze(dnnact_alllayer[layer])
-    model_path = os.path.join(
-            pred_dir, '{0}_{1}_mean_{2}_{3}_multipred_{4}_model.pkl'.format(
-                    net, act_method, layer.split('_')[0], dataset, model_method))
-    
-    # full model accuracy
-    n_samp_fold = int(dnnact.shape[0]/cvfold)
-    n_samp_fold_cat = int(n_samp_fold / n_cat)
-    X = dnnact.reshape(n_samp_fold, cvfold, -1)
-    Y_tra = np.asarray([int(i/(stim_per_cat/cvfold*(cvfold-1))) for i
-                        in range(int(n_samp_fold*(cvfold-1)))])
-    Y_test = np.asarray([int(i/(stim_per_cat/cvfold)) for i
-                         in range(int(n_samp_fold))])
-                   
-    confus = []
-    time0 = time.time()
-    for cv in range(cvfold):
-        X_tra = np.delete(X, cv, axis=1).reshape(-1, X.shape[-1])
-        model = LogisticRegression(multi_class='multinomial', solver='lbfgs',
-                                   max_iter=max_iter)
-        model.fit(X_tra, Y_tra)      
+# full model accuracy
+n_samp_fold = int(dnnact.shape[0]/cvfold)
+n_samp_fold_cat = int(n_samp_fold / n_cat)
+X = dnnact.reshape(n_samp_fold, cvfold, -1)
+Y_tra = np.asarray([int(i/(stim_per_cat/cvfold*(cvfold-1))) for i
+                    in range(int(n_samp_fold*(cvfold-1)))])
+Y_test = np.asarray([int(i/(stim_per_cat/cvfold)) for i
+                     in range(int(n_samp_fold))])
+               
+confus = []
+time0 = time.time()
+for cv in range(cvfold):
+    X_tra = np.delete(X, cv, axis=1).reshape(-1, X.shape[-1])
+    model = LogisticRegression(multi_class='multinomial', solver='lbfgs',
+                               max_iter=max_iter)
+    model.fit(X_tra, Y_tra)      
 
-        X_test = X[:, cv, :]
-        Y_pred = model.predict(X_test)
-        confus.append(confusion_matrix(Y_test, Y_pred))
+    X_test = X[:, cv, :]
+    Y_pred = model.predict(X_test)
+    confus.append(confusion_matrix(Y_test, Y_pred))
 
-        print('cv {0} done, time:{1}'.format(cv, time.time()-time0))
-            
-    confus = np.asarray(confus)  
-    confus_path = os.path.join(
-            pred_dir, '{0}_{1}_{2}_{3}_multipred_{4}_confus.npy'.format(
-                    net, act_method, layer.split('_')[0], dataset, model_method))
-    np.save(confus_path, confus)
+    print('cv {0} done, time:{1}'.format(cv, time.time()-time0))
+        
+confus = np.asarray(confus)  
+confus_path = os.path.join(
+        pred_dir, '{0}_{1}_{2}_{3}_multipred_{4}_confus.npy'.format(
+                net, act_method, 'fc2', dataset, model_method))
+np.save(confus_path, confus)
 
-# performance & PSI relationship
-acc = []
-for layer in list(dnnact_alllayer.keys()):
-    confus_path = os.path.join(
-            pred_dir, '{0}_{1}_mean_{2}_{3}_multipred_{4}_confus.npy'.format(
-                    net, act_method, layer.split('_')[0], dataset, model_method))
-    confus = np.load(confus_path).mean(0)
-    acc.append(confus.diagonal()/(confus[0, :].sum()))
-acc = np.asarray(acc)
 
-# layerwise correlation between sp and performance of FC2
+# ----- performance & PSI relationship -----
+confus_path = os.path.join(
+        pred_dir, '{0}_{1}_mean_{2}_{3}_multipred_{4}_confus.npy'.format(
+                net, act_method, 'fc2', dataset, model_method))
+confus = np.load(confus_path).mean(0)
+acc = confus.diagonal()/(confus[0, :].sum())
+
+acc_img = np.repeat(acc, stim_per_cat)
+
+# layerwise correlation between category-wise sp and performance of FC2
 acc_sp_corr = [stats.pearsonr(sp[i][~np.isnan(sp[i])], 
-                 acc[-1,~np.isnan(sp[i])]) for i 
-               in range(len(sp))]
-                            
+                 acc[~np.isnan(sp[i])]) for i 
+               in range(len(sp))]                            
 acc_sp_corr = np.asarray(acc_sp_corr)
-
 tau_corr = stats.kendalltau(np.arange(1, len(sp)+1), acc_sp_corr[:,0])
 
-# stepwise glm
-def forward_selected(data, response):
-    """ref: https://planspace.org/20150423-forward_selection_with_statsmodels/
-    Linear model designed by forward selection.
-    Parameters:
-    -----------
-    data : pandas DataFrame with all possible predictors and response
-    response: string, name of response column in data
-    Returns:
-    --------
-    model: an "optimal" fitted statsmodels linear model
-           with an intercept
-           selected by forward selection
-           evaluated by adjusted R-squared
-    """
-    remaining = set(data.columns)
-    remaining.remove(response)
-    selected = []
-    current_score, best_new_score = 0.0, 0.0
-    while remaining and current_score == best_new_score:
-        scores_with_candidates = []
-        for candidate in remaining:
-            formula = "{} ~ {} + 1".format(response,
-                                           ' + '.join(selected + [candidate]))
-            score = smf.ols(formula, data).fit().rsquared_adj
-            scores_with_candidates.append((score, candidate))
-        scores_with_candidates.sort()
-        best_new_score, best_candidate = scores_with_candidates.pop()
-        if current_score < best_new_score:
-            remaining.remove(best_candidate)
-            selected.append(best_candidate)
-            current_score = best_new_score
-    formula = "{} ~ {} + 1".format(response,
-                                   ' + '.join(selected))
-    model = smf.ols(formula, data).fit()
-    return model
+# layerwise correlation between image-wise sp and performance of FC2
+acc_sp_img_corr = [stats.pearsonr(sp_img[i][~np.isnan(sp_img[i])], 
+                 acc_img[~np.isnan(sp_img[i])]) for i 
+               in range(len(sp))]                            
+acc_sp_img_corr = np.asarray(acc_sp_img_corr)
 
-# conv
-data = pd.DataFrame(np.c_[np.asarray(sp[:-2]).T, acc[-1,:]])
-data.columns = [*layer_name[:-2], 'y']
-data_z = data.select_dtypes(include=[np.number]).dropna().apply(
-        stats.zscore)
+# ----- scatter plot of performance & PSI -----
+x, y = sp, acc 
 
-model = forward_selected(data_z, 'y')
-print(model.model.formula)
-print(model.summary())
-
-# fc
-data = pd.DataFrame(np.c_[np.asarray(sp[-2:]).T, acc[-1,:]])
-data.columns = [*layer_name[-2:], 'y']
-data_z = data.select_dtypes(include=[np.number]).dropna().apply(
-        stats.zscore)
-
-model = forward_selected(data_z, 'y')
-print(model.model.formula)
-print(model.summary())
-
-
-#%% --- plot ---
 cmap = plt.cm.get_cmap('Blues')
-color_norm = plt.Normalize(0, len(sp)+len(sp))
-color_conv = cmap(color_norm(range(len(sp)+len(sp))))[2-len(sp):, :]
+color_norm = plt.Normalize(0, len(x)+len(x))
+color_conv = cmap(color_norm(range(len(x)+len(x))))[2-len(x):, :]
 
 cmap = plt.cm.get_cmap('Oranges')
 color_norm = plt.Normalize(0, 5)
@@ -336,13 +298,13 @@ elif net == 'vgg11':
 
 plt.figure(figsize = (10.5,4))
 gs = gridspec.GridSpec(nrows=2, ncols=5, wspace=0.1, hspace=0.1)
-color = ['tab:blue']*(len(sp)-2)
+color = ['tab:blue']*(len(x)-2)
 color.extend(['tab:orange']*2)
 
-for i in range(len(sp)):
+for i in range(len(x)):
     ax = plt.subplot(gs[i])
-    sns.regplot(x=sp[i], y=acc[-1,:], color=color[i], ci=None,
-                scatter_kws={'s':5}, line_kws={'color':'firebrick','linewidth':1, 'linestyle':'-'})
+    sns.regplot(x=x[i], y=y, color=color[i], ci=None,
+                scatter_kws={'s':3}, line_kws={'color':'firebrick','linewidth':1, 'linestyle':'-'})
 
     if np.mod(i,5) == 0:
         ax.set_yticks(yticks)
@@ -358,7 +320,41 @@ for i in range(len(sp)):
     ax.tick_params(axis='both', colors='lightgray', width=1, 
                    labelsize=6, labelcolor='gray')
     plt.setp(ax.spines.values(), color='lightgray')
- 
+
+#----- plot example images ----
+cat_num = 5
+img_per_cat = 5
+
+stim_file = os.path.join(root, '{0}.stim.csv'.format(dataset))
+stim = pd.read_csv(stim_file, skiprows=2)
+stim_path = pd.read_csv(stim_file, skiprows=0, nrows=1).iloc[0,0][5:]
+
+# classification cat viz
+rank = np.argsort(acc)[::-1]  #descending
+
+imgs = []
+#cats = rank[-np.arange(cat_num) -1]
+cats = rank[np.r_[-np.arange(cat_num) -1, np.arange(cat_num)]]
+for cat in cats:
+    img_cat = np.random.choice(stim_per_cat, img_per_cat, replace=False)
+    for i in img_cat:
+        img_path = os.path.join(stim_path, stim[stim['category']==cat].iloc[i,0])
+        imgs.append(Image.open(img_path))
+
+# plot
+fig, axs = plt.subplots(nrows=cats.shape[0], ncols=img_per_cat,
+                        subplot_kw={'xticks': [], 'yticks': [],
+                                    'frame_on': False}, figsize=[6, 9])
+
+for i, ax in enumerate(axs.flat[:len(imgs)]):
+    if np.mod(i, img_per_cat) == 0:
+        ax.set_anchor('W')
+        ax.set_ylabel(caltech256_label['object'][cats[i//img_per_cat]], 
+                      rotation=0, horizontalalignment='left', labelpad=80)
+    img = ax.imshow(imgs[i])
+
+fig.suptitle('Categories with the worst5 (first 5 row) /best5 (last 5 row) classification performance')
+plt.tight_layout()
 
 # %% ===== 3 =====
 # PSI(sp) for permutated models.
