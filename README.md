@@ -1,5 +1,5 @@
 # coding_sparseness
-Scripts here are related to Liu et al., 2020, Hierarchical sparse coding of objects in deep convolutional neural networks (in review).
+Scripts here are related to Liu, X., Zhen, Z., & Liu, J. (2020). Hierarchical sparse coding of objects in deep convolutional neural networks. Frontiers in computational neuroscience, 14, 110..
 
 ## setup framework
 Description: The DNNBrain toolbox was used to extract the DCNN activation. Check out [here](https://github.com/BNUCNL/dnnbrain/). <br>
